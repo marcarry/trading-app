@@ -8,15 +8,15 @@
 :root{color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
-html,body{height:100%;margin:0}
-body{background:#000;color:#fff;font:16px -apple-system,sans-serif;padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left))}
+html{height:100%}
+body{margin:0;min-height:100%;background:#000;color:#fff;font:16px -apple-system,sans-serif;padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left))}
 #viewSearch{padding:0 4px}
 input{width:100%;padding:14px;margin:16px 0 8px;border-radius:12px;border:1px solid #333;background:#111;color:#fff;font-size:17px}
 .row{padding:12px 4px;border-bottom:1px solid #222}
 .sub{color:#888;font-size:13px;margin-top:2px}
 .err{color:#ff6b6b;font-size:14px;margin:8px 0}
 .up{color:#00c805}.down{color:#ff3b30}
-#viewChart{display:flex;flex-direction:column;height:100%}
+#viewChart{display:flex;flex-direction:column;min-height:100vh;min-height:100svh}
 .top{display:flex;align-items:center;gap:8px;padding:6px 0}
 #back{background:none;border:0;color:#fff;font-size:30px;line-height:1;padding:0 8px 4px 0}
 #title{font-size:15px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -27,8 +27,28 @@ input{width:100%;padding:14px;margin:16px 0 8px;border-radius:12px;border:1px so
 .bar::-webkit-scrollbar{display:none}
 .chip{flex:0 0 auto;padding:7px 12px;border-radius:16px;border:1px solid #2a2a2a;background:#111;color:#bbb;font-size:14px}
 .chip.on{background:#fff;color:#000;border-color:#fff}
-#chart{flex:1;min-height:120px;position:relative}
+.chip.ind{border-color:#777;color:#fff}
+#chart{flex:1;min-height:330px;position:relative}
+#legend{display:flex;flex-wrap:wrap;gap:4px 14px;padding:6px 0;font-size:12px;color:#ccc}
+.lg i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.lg.note{color:#ff9f0a}
 #info{padding:6px 0;line-height:1.35}
+#sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:10}
+#sheetBox{background:#111;width:100%;max-height:85vh;overflow:auto;border-radius:18px 18px 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom))}
+.sheetTop{display:flex;justify-content:space-between;align-items:center;font-size:18px}
+.x{background:none;border:0;color:#fff;font-size:22px;padding:6px 10px}
+.grp{color:#888;font-size:12px;text-transform:uppercase;margin:16px 0 4px}
+.irow{border-bottom:1px solid #222;padding:8px 0}
+.ihead{display:flex;align-items:center;gap:12px}
+.iname{flex:1}
+.sw{width:50px;height:30px;border-radius:15px;border:0;background:#333;position:relative;flex:0 0 auto}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff}
+.sw.on{background:#00c805}.sw.on::after{left:23px}
+.gear{background:none;border:0;color:#aaa;font-size:20px;padding:6px 8px}
+.set{display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;margin:10px 0 4px;font-size:14px;color:#ccc}
+.set input[type=number],.set select{width:96px;padding:8px;margin:0;font-size:16px;border-radius:8px;text-align:right;border:1px solid #333;background:#000;color:#fff}
+.set input[type=color]{width:56px;height:34px;padding:0;margin:0;border:0;background:none}
+#reset{margin-top:18px}
 @media (orientation:landscape) and (max-height:500px){#price{font-size:20px;min-height:0}#info{display:none}}
 </style>
 </head>
@@ -45,12 +65,22 @@ input{width:100%;padding:14px;margin:16px 0 8px;border-radius:12px;border:1px so
   <div id="ohlc" class="ohlc"></div>
   <div class="bar" id="tfBar"></div>
   <div id="chart"></div>
+  <div id="legend"></div>
   <div class="bar" id="rangeBar"></div>
   <div class="bar" id="typeBar"></div>
   <div id="info" class="sub"></div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<div id="sheet" hidden>
+  <div id="sheetBox">
+    <div class="sheetTop"><b>Indikatoren</b><button id="sheetClose" class="x" aria-label="Schließen">✕</button></div>
+    <div id="sheetBody"></div>
+    <button id="reset" class="chip">Auf Standard zurücksetzen</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="indicators.js"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>
+<script src="menu.js"></script>
 </body>
 </html>
