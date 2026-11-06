@@ -76,7 +76,7 @@ function ensureChart() {
     timeScale: { borderColor: "#222", timeVisible: true, secondsVisible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     handleScroll: { vertTouchDrag: false },
-    localization: { locale: "de-DE" }
+    localization: { locale: "de-DE", priceFormatter: v => fmt(v, prec(S.last)) }
   });
   S.chart.subscribeCrosshairMove(p => {
     const k = p.time !== undefined ? S.byTime.get(p.time) : null;
@@ -109,7 +109,6 @@ function draw() {
   S.vol = S.chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "" });
   S.vol.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
   S.vol.setData(c.map(k => ({ time: k.time, value: k.v, color: k.c >= k.o ? "rgba(0,200,5,0.45)" : "rgba(255,59,48,0.45)" })));
-  S.main.createPriceLine({ price: S.last, color: "#888888", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "" });
   S.chart.timeScale().fitContent();
 }
 
