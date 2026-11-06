@@ -5,11 +5,119 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Trading-App</title>
 <style>
-  body { margin: 0; background: #000; color: #fff; font-family: -apple-system, sans-serif;
-         display: flex; align-items: center; justify-content: center; height: 100vh; }
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#000;color:#fff;font:16px -apple-system,sans-serif;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+input{width:100%;padding:14px;margin:16px 0 8px;border-radius:12px;border:1px solid #333;background:#111;color:#fff;font-size:17px}
+.row{padding:12px 4px;border-bottom:1px solid #222}
+.sub{color:#888;font-size:13px;margin-top:2px}
+.err{color:#ff6b6b;font-size:14px;margin:8px 0}
+.card{background:#111;border-radius:12px;padding:14px;margin-top:12px}
+.big{font-size:32px;font-weight:600;margin:6px 0}
+.up{color:#00c805}.down{color:#ff3b30}
+table{width:100%;font-size:12px;border-collapse:collapse;margin-top:10px}
+td{padding:3px 2px}
 </style>
 </head>
 <body>
-  <h1>Trading-App läuft ✓</h1>
+<input id="q" placeholder="Aktie oder Krypto suchen" autocomplete="off" autocapitalize="off">
+<div id="errs"></div>
+<div id="list"></div>
+<div id="detail"></div>
+<div class="sub" style="margin:24px 0">Testseite Etappe 2: Daten und Suche. Der Chart folgt in Etappe 3.</div>
+<script>
+const $=id=>document.getElementById(id);
+const BIN="https://data-api.binance.vision";
+const NAMES={bitcoin:"BTC",ethereum:"ETH",solana:"SOL",ripple:"XRP",cardano:"ADA",dogecoin:"DOGE",polkadot:"DOT",litecoin:"LTC",chainlink:"LINK",avalanche:"AVAX"};
+let binSyms=null,timer,seq=0;
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+$("q").addEventListener("input",()=>{clearTimeout(timer);timer=setTimeout(search,350)});
+
+async function binanceSearch(q){
+  if(!binSyms){
+    const r=await fetch(BIN+"/api/v3/ticker/price");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    binSyms=(await r.json()).map(x=>x.symbol).filter(s=>s.endsWith("EUR")&&s.length>3);
+  }
+  const ql=q.toLowerCase();
+  const alias=Object.entries(NAMES).filter(([n])=>n.startsWith(ql)).map(([,b])=>b);
+  return binSyms.filter(s=>{const b=s.slice(0,-3);return b.toLowerCase().startsWith(ql)||alias.includes(b)})
+    .slice(0,10).map(s=>({source:"binance",symbol:s,name:s.slice(0,-3)+" / EUR",exchange:"Binance",type:"CRYPTO"}));
+}
+
+async function search(){
+  const q=$("q").value.trim(),my=++seq,res=[],errs=[];
+  if(!q){$("list").replaceChildren();$("errs").replaceChildren();return}
+  await Promise.all([
+    (async()=>{try{
+      const r=await fetch("/api/search?q="+encodeURIComponent(q));
+      const d=await r.json();
+      res.push(...d.results);
+      (d.errors||[]).filter(e=>!e.startsWith("Kryptosuche")).forEach(e=>errs.push(e));
+    }catch(e){errs.push("Aktiensuche nicht erreichbar: "+e.message)}})(),
+    (async()=>{try{res.push(...await binanceSearch(q))}
+      catch(e){errs.push("Kryptosuche (Binance direkt): "+e.message)}})()
+  ]);
+  if(my!==seq) return;
+  const box=$("list");
+  box.replaceChildren();
+  $("errs").replaceChildren(...errs.map(e=>el("div","err",e)));
+  if(!res.length&&!errs.length) box.append(el("div","sub","Keine Treffer."));
+  res.forEach(x=>{
+    const row=el("div","row");
+    row.append(el("div",null,x.name),el("div","sub",x.symbol+" · "+x.exchange+" · "+(x.source==="binance"?"Binance":"Yahoo Finance")));
+    row.onclick=()=>show(x);
+    box.append(row);
+  });
+}
+
+async function show(x){
+  const d=$("detail");
+  d.replaceChildren(el("div","sub","Lade "+x.symbol+" …"));
+  try{
+    let data;
+    if(x.source==="binance"){
+      const r=await fetch(BIN+"/api/v3/klines?symbol="+x.symbol+"&interval=1d&limit=30");
+      if(!r.ok) throw new Error("Binance HTTP "+r.status);
+      const k=await r.json();
+      data={source:"Binance",currency:"EUR",exchange:"Binance Spot",dataKind:"realtime",
+        note:"Marktdaten von Binance, nicht identisch mit Trade Republic",
+        fetchedAt:Math.floor(Date.now()/1000),
+        candles:k.map(a=>({t:Math.floor(a[0]/1000),o:+a[1],h:+a[2],l:+a[3],c:+a[4],v:+a[5]}))};
+    }else{
+      const r=await fetch("/api/history?source=yahoo&symbol="+encodeURIComponent(x.symbol)+"&interval=1d&range=1mo");
+      data=await r.json();
+      if(data.error) throw new Error(data.error);
+    }
+    render(x,data);
+  }catch(e){d.replaceChildren(el("div","err","Fehler: "+e.message))}
+}
+
+function render(x,d){
+  const c=d.candles;
+  if(!c||!c.length) throw new Error("Keine Kursdaten erhalten");
+  const f=n=>n.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:n<1?6:2});
+  const last=d.lastPrice!=null?d.lastPrice:c[c.length-1].c;
+  const chg=(last-c[0].o)/c[0].o*100;
+  const card=el("div","card");
+  card.append(el("div",null,x.name));
+  card.append(el("div","big",f(last)+" "+d.currency));
+  card.append(el("div",chg>=0?"up":"down",(chg>=0?"+":"")+chg.toFixed(2).replace(".",",")+" % im Zeitraum"));
+  card.append(el("div","sub",(d.dataKind==="realtime"?"Echtzeitdaten":"Verzögerte Daten")+" · "+d.source+" · "+d.exchange));
+  const t=d.lastPriceTime||d.fetchedAt;
+  card.append(el("div","sub",(d.lastPriceTime?"Letzter Kurs: ":"Abgerufen: ")+new Date(t*1000).toLocaleString("de-DE")));
+  card.append(el("div","sub",d.note));
+  const tb=el("table"),hr=el("tr");
+  ["Datum","Open","High","Low","Close"].forEach(h=>hr.append(el("td","sub",h)));
+  tb.append(hr);
+  c.slice(-5).reverse().forEach(k=>{
+    const tr=el("tr");
+    [new Date(k.t*1000).toLocaleDateString("de-DE"),f(k.o),f(k.h),f(k.l),f(k.c)].forEach(v=>tr.append(el("td",null,v)));
+    tb.append(tr);
+  });
+  card.append(tb);
+  $("detail").replaceChildren(card);
+}
+</script>
 </body>
 </html>
