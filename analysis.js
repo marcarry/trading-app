@@ -47,26 +47,32 @@ const Analysis = (() => {
 
     // Trendstruktur und Preiszonen (aus Kursdaten, immer)
     const w = n >= 250 ? 5 : 3, pv = pivots(k, w);
+    const tol = 0.5 * (atrV != null ? atrV : price * 0.01); // Schwelle: ½ ATR
     let trend = { dir: "unklar", text: "Zu wenige Hoch- und Tiefpunkte für eine Aussage." };
     if (pv.hi.length >= 2 && pv.lo.length >= 2) {
       const [h1, h2] = pv.hi.slice(-2), [l1, l2] = pv.lo.slice(-2);
-      const hh = h2.p > h1.p, hl = l2.p > l1.p;
-      let s, dir, txt;
-      if (hh && hl) { s = 1; dir = "Aufwärtstrend"; txt = "höhere Hochs (" + f(h1.p, d) + " → " + f(h2.p, d) + ") und höhere Tiefs (" + f(l1.p, d) + " → " + f(l2.p, d) + ")"; }
-      else if (!hh && !hl) { s = -1; dir = "Abwärtstrend"; txt = "tiefere Hochs (" + f(h1.p, d) + " → " + f(h2.p, d) + ") und tiefere Tiefs (" + f(l1.p, d) + " → " + f(l2.p, d) + ")"; }
-      else { s = 0; dir = "Seitwärts"; txt = "gemischte Struktur (Hochs " + (hh ? "höher" : "tiefer") + ", Tiefs " + (hl ? "höher" : "tiefer") + ")"; }
-      trend = { dir, text: txt.charAt(0).toUpperCase() + txt.slice(1) + "." };
-      put("structure", "Trendstruktur", true, s, trend.text);
+      const cmp = (x, y) => y - x > tol ? 1 : x - y > tol ? -1 : 0; // 1 = klar höher, -1 = klar tiefer, 0 = ähnlich
+      const ch = cmp(h1.p, h2.p), cl2 = cmp(l1.p, l2.p), word = c => c > 0 ? "höher" : c < 0 ? "tiefer" : "ähnlich";
+      const s = ch > 0 && cl2 > 0 ? 1 : ch < 0 && cl2 < 0 ? -1 : 0;
+      const dir = s > 0 ? "Aufwärtstrend" : s < 0 ? "Abwärtstrend" : "Seitwärts";
+      const txt = "Letzte Hochs " + word(ch) + " (" + f(h1.p, d) + " → " + f(h2.p, d) + "), letzte Tiefs " + word(cl2) + " (" + f(l1.p, d) + " → " + f(l2.p, d) + ")" + (s === 0 ? "; kein klarer Trend (Hochs und Tiefs müssen sich beide um mehr als ½ ATR verschieben)." : ".");
+      trend = { dir, text: txt };
+      put("structure", "Trendstruktur", true, s, txt);
     } else nodata("structure", "Trendstruktur", "genug Hoch- und Tiefpunkte");
+    const longP = n >= 205 ? 200 : n >= 55 ? 50 : 0;
+    if (longP) {
+      const lm = Ind.sma(cl, longP)[n - 1], above = price > lm;
+      trend.long = "Übergeordnet: Kurs " + (above ? "über" : "unter") + " der SMA " + longP + " (" + f(lm, d) + ").";
+      if ((trend.dir === "Aufwärtstrend" && !above) || (trend.dir === "Abwärtstrend" && above)) risks.push("Der kurzfristige " + trend.dir + " steht im Widerspruch zur übergeordneten Lage (Kurs " + (above ? "über" : "unter") + " der SMA " + longP + ").");
+    }
 
-    const tol = 0.5 * (atrV != null ? atrV : price * 0.01);
     const zs = zones(pv, tol);
     const support = zs.filter(z => z.level < price).sort((a, b) => b.level - a.level).slice(0, 2);
     const resist = zs.filter(z => z.level > price).sort((a, b) => a.level - b.level).slice(0, 2);
     let breakout = null;
     if (n >= 5) for (const z of zs) if (z.touches >= 2) {
-      if (price > z.hi && k[n - 4].c <= z.hi) breakout = { dir: "up", level: z.level, text: "Kurs ist in den letzten 3 Kerzen über die Widerstandszone bei " + f(z.level, d) + " ausgebrochen." };
-      else if (price < z.lo && k[n - 4].c >= z.lo) breakout = { dir: "down", level: z.level, text: "Kurs ist in den letzten 3 Kerzen unter die Unterstützungszone bei " + f(z.level, d) + " gefallen." };
+      if (price > z.hi && k[n - 4].c <= z.hi) breakout = { dir: "up", level: z.level, text: "Kurs ist in den letzten 3 Kerzen über die Zone bei " + f(z.level, d) + " gestiegen (früher Widerstand, nun möglicher Halt)." };
+      else if (price < z.lo && k[n - 4].c >= z.lo) breakout = { dir: "down", level: z.level, text: "Kurs ist in den letzten 3 Kerzen unter die Zone bei " + f(z.level, d) + " gefallen (früher Unterstützung, nun möglicher Widerstand)." };
     }
     {
       const near = [...support, ...resist].sort((a, b) => Math.abs(a.level - price) - Math.abs(b.level - price))[0];
