@@ -3,7 +3,14 @@
   const dt = t => new Date(t * 1000).toLocaleDateString("de-DE");
   const pr = n => n < 1 ? 6 : n < 100 ? 4 : 2;
 
-  /* ---------- Tagesänderung gegenüber dem Vortagesschluss ---------- */
+  // entfernt Platzhalter-Kerzen ohne Volumen am Ende (nur wenn davor gehandelt wurde)
+  function trimTail(c) {
+    const hasVol = c.slice(-30).some(k => k.v > 0), dropped = [];
+    while (hasVol && c.length > 1 && !(c[c.length - 1].v > 0)) dropped.push(c.pop());
+    return dropped;
+  }
+
+  /* ---------- Tagesänderung: letzter Tagesschluss gegenüber dem davor ---------- */
   async function dayChange(asset) {
     if (asset.source === "binance") {
       const r = await fetch(Data.BIN + "/api/v3/ticker/24hr?symbol=" + asset.symbol);
@@ -14,11 +21,11 @@
     const r = await fetch("/api/history?source=yahoo&symbol=" + encodeURIComponent(asset.symbol) + "&interval=1d&range=5d");
     const x = await r.json();
     if (!r.ok || x.error) throw new Error(x.error || "HTTP " + r.status);
-    const cs = x.candles, lp = x.lastPrice, lt = x.lastPriceTime;
-    if (!cs.length || lp == null) throw new Error("keine Tagesdaten");
-    const prev = lt ? cs.filter(k => k.t < lt - 12 * 3600).pop() : cs[cs.length - 2];
-    if (!prev) throw new Error("kein Vortagesschluss gefunden");
-    return { abs: lp - prev.c, pct: (lp / prev.c - 1) * 100, basis: "dem Vortagesschluss " + fm(prev.c, pr(prev.c)) + " (" + dt(prev.t) + ")" };
+    const cs = x.candles.slice();
+    trimTail(cs);
+    if (cs.length < 2) throw new Error("zu wenige Tagesdaten");
+    const cur = cs[cs.length - 1], prev = cs[cs.length - 2];
+    return { abs: cur.c - prev.c, pct: (cur.c / prev.c - 1) * 100, when: dt(cur.t), basis: "dem Vortagesschluss " + fm(prev.c, pr(prev.c)) + " (" + dt(prev.t) + ")" };
   }
 
   /* ---------- Daten laden, bereinigen, prüfen ---------- */
@@ -27,15 +34,24 @@
     const d = await baseLoad.call(Data, asset, tfId, rangeId);
     const c = d.candles, issues = [];
     if (asset.source === "yahoo") {
-      const hasVol = c.slice(-30).some(k => k.v > 0), dropped = [];
-      while (hasVol && c.length > 1 && !(c[c.length - 1].v > 0)) dropped.push(c.pop());
+      const dropped = trimTail(c);
       if (dropped.length) issues.push({ level: "info", text: dropped.length + " Kerze(n) ohne Handelsvolumen am Ende entfernt (letzte: " + dt(dropped[0].t) + ", Schlusskurs " + fm(dropped[0].c, pr(dropped[0].c)) + "). Bei wenig gehandelten Papieren liefert die Datenquelle solche Platzhalter." });
     }
     const last = c[c.length - 1];
     if (!last) throw new Error("Keine Kursdaten nach der Bereinigung.");
-    const gap = d.lastPrice != null ? Math.abs(d.lastPrice / last.c - 1) : 0;
-    if (gap > (d.tf.sec < 86400 ? 0.01 : 0.005))
-      issues.push({ level: "warn", text: "Kursanzeige (" + fm(d.lastPrice, pr(d.lastPrice)) + ") und letzte Kerze (" + fm(last.c, pr(last.c)) + ") weichen um " + fm(gap * 100, 1) + " % voneinander ab, die Datenquelle liefert widersprüchliche Werte." });
+    // Einheitliche Datenbasis: Kursanzeige, Chart, Indikatoren und Analyse nutzen den Schlusskurs der letzten Kerze
+    const quote = d.lastPrice;
+    d.quotePrice = quote;
+    d.lastPrice = last.c;
+    const gap = quote != null ? Math.abs(quote / last.c - 1) : 0;
+    if (gap > 0.01)
+      issues.push({ level: "warn", text: "Der Kurs der Datenquelle (" + fm(quote, pr(quote)) + ") und die letzte Kerze (" + fm(last.c, pr(last.c)) + ") weichen um " + fm(gap * 100, 1) + " % voneinander ab, die Datenquelle liefert widersprüchliche Werte." });
+    else if (gap > 0.002)
+      issues.push({ level: "info", text: "Der Kurs der Datenquelle (" + fm(quote, pr(quote)) + ") weicht leicht von der letzten Kerze (" + fm(last.c, pr(last.c)) + ") ab, z. B. durch einen späteren Handel. Anzeige und Analyse nutzen die letzte Kerze." });
+    if (asset.source === "yahoo" && d.tf.id === "1d" && c.length >= 20) {
+      const l20 = c.slice(-20), vol = l20.reduce((a, k) => a + k.v, 0) / 20, dv = l20.reduce((a, k) => a + k.v * k.c, 0) / 20;
+      if (dv < 100000) issues.push({ level: "warn", text: "Sehr geringer Handel: im Schnitt nur ca. " + fm(vol, 0) + " Stück bzw. ca. " + fm(dv, 0) + " " + (d.currency || "") + " pro Tag (letzte 20 Kerzen). Kurse und Indikatoren sind bei so wenig Handel kaum aussagekräftig." });
+    }
     d.dayChange = null;
     try { d.dayChange = await dayChange(asset); }
     catch (e) { issues.push({ level: "info", text: "Tagesänderung nicht verfügbar (" + e.message + ")." }); }
@@ -53,7 +69,7 @@
     const sg = v => v >= 0 ? "+" : "";
     const line = (txt, v, small) => { const e = el("div", null, txt); e.style.color = v == null ? "#888" : v >= 0 ? "#00c805" : "#ff3b30"; if (small) e.style.fontSize = "13px"; return e; };
     const last = d.lastPrice != null ? d.lastPrice : c[c.length - 1].c, pd = last - c[0].o, rows = [];
-    if (d.dayChange) rows.push(line("Heute " + sg(d.dayChange.abs) + fmt(d.dayChange.abs, p) + " " + d.currency + " (" + sg(d.dayChange.pct) + fmt(d.dayChange.pct, 2) + " %) gegenüber " + d.dayChange.basis, d.dayChange.abs));
+    if (d.dayChange) rows.push(line((d.dayChange.when === new Date().toLocaleDateString("de-DE") ? "Heute" : "Letzter Handelstag (" + d.dayChange.when + ")") + " " + sg(d.dayChange.abs) + fmt(d.dayChange.abs, p) + " " + d.currency + " (" + sg(d.dayChange.pct) + fmt(d.dayChange.pct, 2) + " %) gegenüber " + d.dayChange.basis, d.dayChange.abs));
     else rows.push(line("Heute: nicht verfügbar", null));
     rows.push(line("Zeitraum " + d.range.label + ": " + sg(pd) + fmt(pd, p) + " " + d.currency + " (" + sg(pd) + fmt(pd / c[0].o * 100, 2) + " %)", pd, true));
     $("chg").className = "";
