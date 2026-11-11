@@ -38,20 +38,40 @@
     "Ausbruch abwarten": "#ffb020",
     "Kein attraktiver Einstieg": "#ff6b6b"
   };
+  function formatItem(item) {
+    if (typeof item === "string") return item;
+    if (item == null) return "";
+  
+    if (typeof item === "object") {
+      if (item.text && item.level) {
+        return "Risikostufe: " + item.level + " – " + item.text;
+      }
+  
+      if (item.text) return item.text;
+      if (item.message) return item.message;
+      if (item.label) return item.label;
+      if (item.name) return item.name;
+    }
 
+    return String(item);
+  }
   function appendList(parent, items) {
     if (!Array.isArray(items) || !items.length) return;
+  
     const ul = el("ul");
-    items.forEach(item => ul.append(el("li", null,
-      typeof item === "string" ? item : JSON.stringify(item))));
+  
+    items.forEach(item => {
+      ul.append(el("li", null, formatItem(item)));
+    });
+  
     parent.append(ul);
   }
 
   function appendFacts(parent, items) {
     if (!Array.isArray(items) || !items.length) return;
+  
     items.forEach(item => {
-      parent.append(el("div", "aifact",
-        typeof item === "string" ? item : JSON.stringify(item)));
+      parent.append(el("div", "aifact", formatItem(item)));
     });
   }
 
@@ -209,8 +229,29 @@
 
         if (entry.risk) {
           head(entrySection, "Einschätzung des Risikos");
-          para(entrySection, typeof entry.risk === "string"
-            ? entry.risk : JSON.stringify(entry.risk));
+        
+          const risk = entry.risk;
+        
+          if (typeof risk === "string") {
+            para(entrySection, risk);
+          } else {
+            const riskText = formatItem(risk);
+            const riskLevel = risk.level
+              ? "Risikostufe: " + risk.level
+              : "";
+        
+            const riskLine = riskLevel && risk.text
+              ? riskLevel + " – " + risk.text
+              : riskText;
+        
+            const riskClass = risk.level === "erhöht"
+              ? "aiwarn"
+              : risk.level === "niedrig"
+                ? "aigood"
+                : "";
+        
+            para(entrySection, riskLine, riskClass || "aip");
+          }
         }
 
         if (entry.cautions && entry.cautions.length) {
