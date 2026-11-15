@@ -9,7 +9,7 @@ export async function onRequestGet({ request, env }) {
   if (sym.includes(".")) return J({ available: false, reason: "Das Kürzel " + sym + " hat ein Börsen-Suffix und ist kein US-Wert. Dafür gibt es keine SEC-Daten." });
   let r;
   try {
-    r = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: { "User-Agent": ua }, cf: { cacheTtl: 86400, cacheEverything: true } });
+    r = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: { "User-Agent": ua }, cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": -1 } } });
   } catch (e) { return J({ error: "SEC nicht erreichbar: " + e.message }, 502); }
   if (!r.ok) return J({ error: "Die Ticker-Liste der SEC ist nicht erreichbar (HTTP " + r.status + ")." }, 502);
   const text = await r.text();
