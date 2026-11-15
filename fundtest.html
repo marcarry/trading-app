@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fundamentaldaten-Test</title>
+<style>
+body{margin:0;padding:16px;background:#000;color:#ddd;font:14px -apple-system,sans-serif}
+input,button{font-size:17px;padding:12px;border-radius:10px;border:1px solid #333;background:#111;color:#fff}
+button{margin-left:6px}
+pre{white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,monospace;line-height:1.45}
+.err{color:#ff6b6b}
+</style>
+</head>
+<body>
+<h3>Fundamentaldaten-Test (SEC)</h3>
+<div><input id="s" placeholder="Kürzel, z. B. AAPL" autocapitalize="characters" autocomplete="off"><button id="go">Laden</button></div>
+<pre id="out"></pre>
+<script src="fundraw.js"></script>
+<script>
+const out = document.getElementById("out");
+const M = v => Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(2) + " Mrd" : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + " Mio" : String(v);
+const fd = d => d.split("-").reverse().join(".");
+async function run() {
+  const sym = document.getElementById("s").value.trim().toUpperCase();
+  if (!sym) return;
+  out.className = ""; out.textContent = "Lade " + sym + " …";
+  try {
+    const d = await Fund.load(sym);
+    if (!d.available) { out.textContent = "Nicht verfügbar: " + d.reason; return; }
+    const L = [];
+    L.push(d.name + " (" + d.ticker + ", CIK " + d.cik + ")");
+    L.push("Branche: " + (d.sic ? d.sic + " " + d.sicDescription : "unbekannt") + " · Geschäftsjahresende: " + (d.fiscalYearEnd || "?"));
+    L.push("Quelle: " + d.source + "; zuletzt eingereicht: " + fd(d.asOf) + "; geladen in " + d.ms + " ms (" + Math.round(d.bytes / 1024) + " KB)");
+    for (const [k, s] of Object.entries(d.series)) {
+      L.push("", k + " [" + s.tags.join(", ") + "]");
+      const f = e => s.unit === "USD/shares" ? e.val.toFixed(2) : s.unit === "shares" ? (e.val / 1e6).toFixed(0) + " Mio" : M(e.val);
+      L.push("  Jahr: " + s.annual.map(e => fd(e.end).slice(3) + " " + f(e)).join(" | "));
+      if (s.quarterly.length) L.push("  Quartal: " + s.quarterly.slice(-6).map(e => fd(e.end).slice(3) + " " + f(e) + (e.derived ? "*" : "")).join(" | "));
+    }
+    L.push("", "* = aus Jahr minus 3 Quartale berechnet");
+    out.textContent = L.join("\n");
+  } catch (e) { out.className = "err"; out.textContent = "Fehler: " + e.message; }
+}
+document.getElementById("go").onclick = run;
+document.getElementById("s").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+</script>
+</body>
+</html>
