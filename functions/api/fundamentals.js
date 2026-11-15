@@ -72,8 +72,19 @@ function instantSeries(perTag, noMerge) {
   return { annual: all.filter(e => ANNUAL_FORMS.includes(e.form)).slice(-6).map(slim), quarterly: all.slice(-8).map(slim) };
 }
 
-async function sec(url, ua, ttl) {
-  return fetch(url, { headers: { "User-Agent": ua, "Accept": "application/json" }, cf: { cacheTtl: ttl, cacheEverything: true } });
+async function sec(url, ua, ttl, wait) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(url, { headers: { "User-Agent": ua }, cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": ttl, "300-599": -1 } } });
+    if ((r.status === 403 || r.status === 429) && i < 1) { await new Promise(res => setTimeout(res, wait)); continue; }
+    return r;
+  }
+}
+
+// Meldet eine Begrenzung der SEC mit Angabe, welche Anfrage betroffen war, und dem Anfang der SEC-Antwort
+async function limited(r, where) {
+  let detail = "";
+  try { detail = (await r.text()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240); } catch (e) {}
+  return J({ error: "Die SEC begrenzt gerade Anfragen (HTTP " + r.status + "). Bitte später erneut versuchen.", where, detail }, 503);
 }
 
 export async function onRequestGet({ request, env }) {
@@ -81,9 +92,9 @@ export async function onRequestGet({ request, env }) {
   if (!ua) return J({ error: "Die Einstellung SEC_USER_AGENT fehlt in Cloudflare." }, 500);
   const sym = (new URL(request.url).searchParams.get("symbol") || "").trim().toUpperCase();
   if (!/^[A-Z][A-Z0-9-]{0,9}$/.test(sym)) return J({ available: false, reason: "Für dieses Symbol gibt es keine SEC-Daten (Kürzel mit Börsenendung oder Sonderzeichen, typisch für Nicht-US-Aktien)." });
-  const delay = env.SEC_DELAY_MS != null ? +env.SEC_DELAY_MS : 400;
+  const delay = env.SEC_DELAY_MS != null ? +env.SEC_DELAY_MS : 500, retryWait = env.SEC_RETRY_MS != null ? +env.SEC_RETRY_MS : 2000;
   try {
-    const tr = await sec("https://www.sec.gov/files/company_tickers.json", ua, 86400);
+    const tr = await sec("https://www.sec.gov/files/company_tickers.json", ua, 86400, retryWait);
     if (!tr.ok) return J({ error: "SEC-Kürzelliste nicht erreichbar (HTTP " + tr.status + ")." }, 502);
     const txt = await tr.text();
     const m = new RegExp('"cik_str"\\s*:\\s*(\\d+)\\s*,\\s*"ticker"\\s*:\\s*"' + sym.replace(/-/g, "\\-") + '"\\s*,\\s*"title"\\s*:\\s*"([^"]*)"').exec(txt);
@@ -91,27 +102,27 @@ export async function onRequestGet({ request, env }) {
     const cik = String(m[1]).padStart(10, "0"), name = m[2];
 
     let sic = null, sicDescription = null, fiscalYearEnd = null;
-    const sr = await sec("https://data.sec.gov/submissions/CIK" + cik + ".json", ua, 86400);
+    const sr = await sec("https://data.sec.gov/submissions/CIK" + cik + ".json", ua, 86400, retryWait);
     if (sr.ok) {
       const st = await sr.text(), s = /"sic"\s*:\s*"(\d*)"\s*,\s*"sicDescription"\s*:\s*"([^"]*)"/.exec(st), f = /"fiscalYearEnd"\s*:\s*"(\d{4})"/.exec(st);
       if (s) { sic = s[1]; sicDescription = s[2]; }
       if (f) fiscalYearEnd = f[1];
-    } else if (sr.status === 403 || sr.status === 429) return J({ error: "Die SEC begrenzt gerade Anfragen (HTTP " + sr.status + "). Bitte später erneut versuchen." }, 503);
+    } else if (sr.status === 403 || sr.status === 429) return limited(sr, "Stammdaten (submissions)");
 
     const jobs = [];
     for (const [k, c] of Object.entries(CONCEPTS)) c.tags.forEach((tag, ti) => jobs.push({ k, c, tag, ti }));
     const got = [];
-    for (let i = 0; i < jobs.length; i += 4) {
-      const res = await Promise.all(jobs.slice(i, i + 4).map(async j => {
-        const r = await sec("https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik + "/" + (j.c.taxonomy || "us-gaap") + "/" + j.tag + ".json", ua, 21600);
+    for (let i = 0; i < jobs.length; i += 3) {
+      const res = await Promise.all(jobs.slice(i, i + 3).map(async j => {
+        const r = await sec("https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik + "/" + (j.c.taxonomy || "us-gaap") + "/" + j.tag + ".json", ua, 21600, retryWait);
         if (r.status === 404) return { j, text: null };
-        if (!r.ok) return { j, status: r.status };
+        if (!r.ok) { let snip = ""; try { snip = await r.text(); } catch (e) {} return { j, status: r.status, r, snip }; }
         return { j, text: await r.text() };
       }));
       got.push(...res);
-      const limited = res.find(r => r.status === 403 || r.status === 429);
-      if (limited) return J({ error: "Die SEC begrenzt gerade Anfragen (HTTP " + limited.status + "). Bitte später erneut versuchen." }, 503);
-      if (delay && i + 4 < jobs.length) await new Promise(r => setTimeout(r, delay));
+      const lim = res.find(r => r.status === 403 || r.status === 429);
+      if (lim) return J({ error: "Die SEC begrenzt gerade Anfragen (HTTP " + lim.status + "). Bitte später erneut versuchen.", where: "Kennzahl " + lim.j.k + " (" + lim.j.tag + ")", detail: (lim.snip || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240) }, 503);
+      if (delay && i + 3 < jobs.length) await new Promise(r => setTimeout(r, delay));
     }
 
     const series = {};
